@@ -83,6 +83,7 @@ class BaiduMessageSender:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, data=payload) as response:
                 response_json = await response.json()
+                logger.debug(f"Baidu response: {response_json}")
                 if kwargs.get("only_text", True):
                     return response_json["result"]
                 else:

@@ -13,6 +13,7 @@ class Dialogue:
         if endpoint_config_path and not endpoint:
             endpoint = Endpoint.load_from_yaml(endpoint_config_path)
         self.endpoint = endpoint
+        self.lock = asyncio.Lock()
 
     def get_messages(self):
         return self.messages
@@ -21,17 +22,17 @@ class Dialogue:
         self.messages = []
 
     async def send_message(self, message: str) -> str:
-        self.messages.append({"role": "user", "content": message})
-        logger.debug(f"Sending message {message} to endpoint {self.endpoint.name}")
-        response = await self.endpoint.send_message(self.messages, only_text=True)
-        logger.debug(f"Received response {response} from endpoint {self.endpoint.name}")
-        self.messages.append({"role": "assistant", "content": response})
-        return response
+        async with self.lock:
+            self.messages.append({"role": "user", "content": message})
+            logger.debug(f"Sending message {message} to endpoint {self.endpoint.name}")
+            response = await self.endpoint.send_message(self.messages, only_text=True)
+            logger.debug(f"Received response {response} from endpoint {self.endpoint.name}")
+            self.messages.append({"role": "assistant", "content": response})
+            return response
 
     def send_message_with_callback(self, message: str, callback: Callable[[str], None]) -> None:
-        def complete_callback(f):
-            response = f.result()
+        async def async_send_message():
+            response = await self.send_message(message)
             callback(response)
 
-        future = asyncio.ensure_future(self.send_message(message))
-        future.add_done_callback(complete_callback)
+        asyncio.create_task(async_send_message())
