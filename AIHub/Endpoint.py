@@ -1,10 +1,12 @@
+import asyncio
 import datetime
 import json
 import aiohttp
 import yaml
+from aiohttp import ClientError, ClientOSError
 from loguru import logger
 from typing import List, Dict, runtime_checkable, Protocol, Any
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAIError
 
 
 @runtime_checkable
@@ -95,6 +97,10 @@ class Endpoint:
 
         self.sender = self._create_sender(**self.dict())
 
+        self.is_healthy = True
+        self.last_error = None
+        self.last_error_time = None
+
     @staticmethod
     def _create_sender(**kwargs) -> IMessageSender:
         try:
@@ -112,11 +118,44 @@ class Endpoint:
         except Exception as e:
             logger.error(f"Error while creating {kwargs['name']}: Unknown error: {e}")
 
-    async def send_message(self, message: Any, **kwargs) -> Any:
-        try:
-            return await self.sender.send_message(message, **kwargs)
-        except Exception as e:
-            logger.error(f"Error while sending message by {self.name}: {str(e)}")
+    async def send_message(self, message: Any, retry_count: int = 1, **kwargs) -> Any:
+        retry_delay = 1
+
+        for attempt in range(retry_count + 1):
+            try:
+                response = await self.sender.send_message(message, **kwargs)
+                self.is_healthy = True
+                return response
+            except (ClientError, ClientOSError, ConnectionError, OpenAIError) as e:
+                if attempt < retry_count:
+                    logger.info(
+                        f"Retrying to send message by {self.name}. Attempt {attempt + 1}/{retry_count}. Waiting {retry_delay} seconds.")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    self._handle_error(e)
+                    raise
+            except Exception as e:
+                self._handle_error(e)
+                raise
+
+    def _handle_error(self, e: Exception):
+        self.is_healthy = False
+        self.last_error = str(e)
+        self.last_error_time = datetime.datetime.now()
+        logger.error(f"Error while sending message by {self.name}: {self.last_error}")
+
+    def get_status(self) -> dict:
+        status = {
+            "name": self.name,
+            "provider": self.provider,
+            "is_healthy": self.is_healthy,
+        }
+        if not self.is_healthy:
+            status["last_error"] = self.last_error
+            status["last_error_time"] = self.last_error_time
+        status.update(self.kwargs)
+        return status
 
     @classmethod
     def load_from_yaml(cls, file_path: str) -> 'Endpoint':
