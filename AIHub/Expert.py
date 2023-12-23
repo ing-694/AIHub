@@ -43,7 +43,7 @@ class Expert:
         return result
 
     async def get_answer(self, message: str = None, prompt_type: str = None,
-                         prompt_params: Dict[str, str] = None) -> str:
+                         prompt_params: Dict[str, str] = None, **kwargs) -> str:
         """
         使用指定的提示词和参数，获取回答
         当prompt_type不为空时，使用prompt_type对应的提示词作为LLM输入，并使用prompt_params对Prompt进行补全。此时忽略message参数
@@ -58,17 +58,17 @@ class Expert:
             prompt_message = self._replace_placeholders(prompt_template, prompt_params)
 
             logger.debug(f"Sending prompt '{prompt_type}' with message: {prompt_message}")
-            response = await self.endpoint.send_message([{"role": "user", "content": prompt_message}], only_text=True)
+            response = await self.endpoint.send_message([{"role": "user", "content": prompt_message}], **kwargs)
             logger.debug(f"Received response: {response}")
         else:
             logger.debug(f"Sending message: {message}")
-            response = await self.endpoint.send_message([{"role": "user", "content": message}], only_text=True)
+            response = await self.endpoint.send_message([{"role": "user", "content": message}], **kwargs)
             logger.debug(f"Received response: {response}")
 
         return response
 
     async def communicate(self, message: str = None, prompt_type: str = None,
-                          prompt_params: Dict[str, str] = None) -> str:
+                          prompt_params: Dict[str, str] = None, **kwargs) -> str:
         """
         在一个对话中，使用指定的提示词和参数，获取回答
         当prompt_type不为空时，使用prompt_type对应的提示词作为LLM输入，并使用prompt_params对Prompt进行补全。此时忽略message参数
@@ -83,11 +83,11 @@ class Expert:
             prompt_message = self._replace_placeholders(prompt_template, prompt_params)
 
             logger.debug(f"Sending prompt '{prompt_type}' with message: {prompt_message}")
-            response = await self.dialogue.send_message(prompt_message)
+            response = await self.dialogue.send_message(prompt_message, **kwargs)
             logger.debug(f"Received response: {response}")
         else:
             logger.debug(f"Sending message: {message}")
-            response = await self.dialogue.send_message(message)
+            response = await self.dialogue.send_message(message, **kwargs)
             logger.debug(f"Received response: {response}")
 
         return response

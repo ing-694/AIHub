@@ -35,7 +35,10 @@ class OpenAIMessageSender:
         logger.debug(f"OpenAI Endpoint Created with params: {non_none_params}")
 
     async def send_message(self, message: List[Dict[str, str]], **kwargs) -> str | Dict[str, str]:
+        if system_prompt := kwargs.get("system_prompt", False):
+            message = [{"role": "system", "content": system_prompt}, *message]
         reportResponse = await self.client.chat.completions.create(
+            response_format={"type": "json_object"} if kwargs.get("json_format") else None,
             model=self.model,
             messages=message,
         )
