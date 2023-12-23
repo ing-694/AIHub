@@ -39,7 +39,7 @@ class Expert:
         if not values:
             return result
         for key, value in values.items():
-            result = result.replace(f'{{{key}}}', value)
+            result = result.replace(f'{{{{{key}}}}}', value)
         return result
 
     async def get_answer(self, message: str = None, prompt_type: str = None,
