@@ -13,8 +13,13 @@ async def endpoint_example():
     print("Received response:", response)
     print("Status: ", baidu_endpoint.get_status())
 
+    def get_token_callback(token):
+        print("Got token: ", token)
+
     openai_endpoint = Endpoint.load_from_yaml('../LocalConfig/Endpoints/openai_mirror_1.yaml')
-    response = await openai_endpoint.send_message([{"role": "user", "content": "你好！你是谁？"}], only_text=False)
+    response = await openai_endpoint.send_message([{"role": "user", "content": "你好！你是谁？"}],
+                                                  only_text=False,
+                                                  get_token_callback=get_token_callback)
     print("Received response:", response)
     print("Status: ", baidu_endpoint.get_status())
 

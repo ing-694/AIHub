@@ -42,6 +42,10 @@ class OpenAIMessageSender:
             model=self.model,
             messages=message,
         )
+
+        if get_token := kwargs.get("get_token_callback", None):
+            get_token(reportResponse.usage.total_tokens)
+
         if kwargs.get("only_text", True):
             return reportResponse.choices[0].message.content
         else:
