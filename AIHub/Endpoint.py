@@ -146,6 +146,7 @@ class Endpoint:
                 asyncio.create_task(self._process_message(future, message, kwargs))
                 self.timestamps.append(now)
             else:
+                logger.debug(f"{self.name} is busy. Waiting...")
                 await asyncio.sleep(0.3)
 
     async def _process_message(self, future, message, kwargs):
