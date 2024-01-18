@@ -1,11 +1,13 @@
 import asyncio
 import datetime
 import json
+import time
+
 import aiohttp
 import yaml
 from aiohttp import ClientError, ClientOSError
 from loguru import logger
-from typing import List, Dict, runtime_checkable, Protocol, Any
+from typing import List, Dict, runtime_checkable, Protocol, Any, Tuple
 from openai import AsyncOpenAI, OpenAIError
 
 
@@ -79,7 +81,7 @@ class BaiduMessageSender:
     async def check_and_refresh_token(self):
         if self.access_token is None or (datetime.datetime.now() - self.token_obtained_time).days >= 25:
             self.access_token, self.token_obtained_time = await self._get_access_token(self.api_key, self.secret_key)
-            logger.debug("Refreshing Baidu access token")
+            logger.debug("Baidu access token refreshed")
 
     async def send_message(self, message: List[Dict[str, str]], **kwargs) -> str | Dict[str, str]:
         await self.check_and_refresh_token()
@@ -98,35 +100,23 @@ class BaiduMessageSender:
 
 
 class Endpoint:
-    def __init__(self, name: str, provider: str, **kwargs):
+    def __init__(self, name: str, provider: str, max_calls_per_second: int = 20, **kwargs):
         self.name = name
         self.provider = provider
-        self.kwargs = kwargs
+        self.max_calls_per_second = max_calls_per_second
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.timestamps: List[float] = []
+        self.worker = asyncio.create_task(self._worker())
 
+        self.kwargs = kwargs
         self.sender = self._create_sender(**self.dict())
 
-        self.is_healthy = True
-        self.last_error = None
-        self.last_error_time = None
-
-    @staticmethod
-    def _create_sender(**kwargs) -> IMessageSender:
-        try:
-            provider = kwargs['provider']
-            if provider == 'openai':
-                return OpenAIMessageSender(**kwargs)
-            elif provider == 'baidu':
-                return BaiduMessageSender(**kwargs)
-            else:
-                raise ValueError(f"Unsupported provider: {provider}")
-        except KeyError as e:
-            logger.error(f"Error while creating {kwargs['name']}: Missing required argument: {e}")
-        except ValueError as e:
-            logger.error(f"Error while creating {kwargs['name']}: {e}")
-        except Exception as e:
-            logger.error(f"Error while creating {kwargs['name']}: Unknown error: {e}")
-
     async def send_message(self, message: Any, retry_count: int = 1, **kwargs) -> Any:
+        future = asyncio.get_event_loop().create_future()
+        await self.queue.put((future, message, kwargs))
+        return await future
+
+    async def _send_message(self, message: Any, retry_count: int = 1, **kwargs) -> Any:
         retry_delay = 1
 
         for attempt in range(retry_count + 1):
@@ -146,6 +136,48 @@ class Endpoint:
             except Exception as e:
                 self._handle_error(e)
                 raise
+
+    async def _worker(self):
+        while True:
+            can_consume, now = self.can_consume_task()
+            # logger.debug(f"{self.name}: can_consume: {can_consume}")
+            if can_consume:
+                future, message, kwargs = await self.queue.get()
+                asyncio.create_task(self._process_message(future, message, kwargs))
+                self.timestamps.append(now)
+            else:
+                await asyncio.sleep(0.3)
+
+    async def _process_message(self, future, message, kwargs):
+        try:
+            response = await self._send_message(message, **kwargs)
+            future.set_result(response)
+        except Exception as e:
+            future.set_exception(e)
+        finally:
+            self.queue.task_done()
+
+    def can_consume_task(self) -> Tuple[bool, float]:
+        now = time.time()
+        self.timestamps = [t for t in self.timestamps if now - t < 1]
+        return len(self.timestamps) < self.max_calls_per_second, now
+
+    @staticmethod
+    def _create_sender(**kwargs) -> IMessageSender:
+        try:
+            provider = kwargs['provider']
+            if provider == 'openai':
+                return OpenAIMessageSender(**kwargs)
+            elif provider == 'baidu':
+                return BaiduMessageSender(**kwargs)
+            else:
+                raise ValueError(f"Unsupported provider: {provider}")
+        except KeyError as e:
+            logger.error(f"Error while creating {kwargs['name']}: Missing required argument: {e}")
+        except ValueError as e:
+            logger.error(f"Error while creating {kwargs['name']}: {e}")
+        except Exception as e:
+            logger.error(f"Error while creating {kwargs['name']}: Unknown error: {e}")
 
     def _handle_error(self, e: Exception):
         self.is_healthy = False
@@ -197,3 +229,9 @@ class Endpoint:
             "provider": self.provider,
             **self.kwargs
         }
+
+    async def close(self):
+        await self.queue.join()
+        self.worker.cancel()
+        await asyncio.gather(self.worker, return_exceptions=True)
+
